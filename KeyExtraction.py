@@ -1,14 +1,14 @@
 import os
 from tkinter import Tk
 from tkinter.filedialog import askdirectory, askopenfilename
-import pytextrank
 import spacy
 from sklearn.metrics import precision_score, recall_score, f1_score
 import nltk
 from nltk.stem import WordNetLemmatizer
-import re  # Import regular expression library
+import re
 import networkx as nx
 import matplotlib.pyplot as plt
+from keybert import KeyBERT  # Import KeyBERT
 
 nltk.download('wordnet')
 lemmatizer = WordNetLemmatizer()
@@ -54,7 +54,7 @@ def load_text_from_file(filepath):
 def load_keywords_from_file(filepath):
     try:
         with open(filepath, 'r', encoding='utf-8') as file:
-            keywords = [re.sub(r',\s*\d+$', '', line.strip().lower()) for line in file] # Remove numbers and lowercase
+            keywords = [re.sub(r',\s*\d+$', '', line.strip().lower()) for line in file]
         return keywords
     except Exception as e:
         print(f"Error loading keywords from {filepath}: {e}")
@@ -66,13 +66,12 @@ if not reference_keywords:
     print("No keywords loaded from the file.")
     exit()
 
-nlp = spacy.load("en_core_web_sm")
-nlp.add_pipe("textrank")
+nlp = spacy.load("en_core_web_sm") #Using Small spacy model.
+kb = KeyBERT('distilbert-base-nli-mean-tokens') #Load KeyBERT model.
 
-def extract_keywords_pytextrank(text, num_keywords=10):
-    doc = nlp(text)
-    keywords = [(phrase.text.strip().lower(), phrase.rank) for phrase in doc._.phrases] # Lowercase and strip
-    return keywords[:num_keywords]
+def extract_keywords_keybert(text, num_keywords=10):
+    keywords = kb.extract_keywords(text, keyphrase_ngram_range=(1, 3), stop_words='english', highlight=False, top_n=num_keywords)
+    return [keyword[0] for keyword in keywords]
 
 def evaluate_keywords(reference, predicted):
     common = set(reference) & set(predicted)
@@ -86,15 +85,14 @@ def build_concept_map(keywords, text):
     G = nx.Graph()
     G.add_nodes_from(keywords)
 
-    # Simple co-occurrence based relationship detection
     for i, keyword1 in enumerate(keywords):
         for j, keyword2 in enumerate(keywords):
             if i < j:
                 if keyword1 in text.lower() and keyword2 in text.lower():
                     G.add_edge(keyword1, keyword2)
 
-    # Draw the graph
-    pos = nx.spring_layout(G)  # Layout algorithm
+    plt.figure(figsize=(12, 10))
+    pos = nx.spring_layout(G, k=0.5)
     nx.draw(G, pos, with_labels=True, node_color='skyblue', node_size=1500, edge_color='gray')
     plt.title("Concept Map")
     plt.show()
@@ -105,12 +103,11 @@ for filename in os.listdir(train_dir):
     if os.path.isfile(train_file_path):
         train_text = load_text_from_file(train_file_path)
         if train_text:
-            nlp(train_text)
-            print(f"Processed training file: {filename}")
+            nlp(train_text) #Process training data with spacy.
 
 print("\nEvaluating on Test Data...")
-all_extracted_keywords = [] # Store extracted keywords for all test files.
-all_test_texts = [] # Store all test texts
+all_extracted_keywords = []
+all_test_texts = []
 
 all_precisions = []
 all_recalls = []
@@ -121,11 +118,10 @@ for filename in os.listdir(test_dir):
     if os.path.isfile(test_file_path):
         test_text = load_text_from_file(test_file_path)
         if test_text:
-            extracted_keywords_with_scores = extract_keywords_pytextrank(test_text)
-            extracted_keywords = [kw[0] for kw in extracted_keywords_with_scores]
+            extracted_keywords = extract_keywords_keybert(test_text) #Using KeyBERT for keyword extraction.
 
-            all_extracted_keywords.extend(extracted_keywords) # Append to the global list
-            all_test_texts.append(test_text) # Append to the global List
+            all_extracted_keywords.extend(extracted_keywords)
+            all_test_texts.append(test_text)
 
             precision, recall, f1 = evaluate_keywords(reference_keywords, extracted_keywords)
             all_precisions.append(precision)
@@ -133,9 +129,7 @@ for filename in os.listdir(test_dir):
             all_f1s.append(f1)
 
             print(f"File: {filename}, Precision: {precision}, Recall: {recall}, F1-score: {f1}")
-            print(f"   Extracted: {extracted_keywords}")
-            print(f"   Reference: {reference_keywords}")
-
+            
 if all_f1s:
     avg_precision = sum(all_precisions) / len(all_precisions)
     avg_recall = sum(all_recalls) / len(all_recalls)
@@ -147,7 +141,6 @@ if all_f1s:
 else:
     print("No test files processed.")
 
-# Build and display the concept map after processing all test files
 if all_extracted_keywords and all_test_texts:
-    combined_text = " ".join(all_test_texts) # Combine all test texts
+    combined_text = " ".join(all_test_texts)
     build_concept_map(all_extracted_keywords, combined_text)

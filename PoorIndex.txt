@@ -1,0 +1,41 @@
+ZF Net, 466
+You Only Look Once (YOLO), 489
+workspace creation, 42
+wisdom of the crowd, 189
+weak learners, 190
+vocabulary, 432
+preserving, 219
+common tasks, 10
+algorithms covered, 10
+unrolling the network through time, 498
+example project, 72
+poor quality, 26
+nonrepresentative, 25
+hold outs, 31
+tolerance, 123
+thermal equilibrium, 775
+lists of lists using SequenceExample Proto‐buf, 429
+installing, 643
+rules, 409
+Term-Frequency × Inverse-Document-Frequency (TF-IDF), 439
+layers, 391
+installing, 296
+getting help, 379
+stride, 449
+stacking, 208
+Spearmint library, 322
+soft voting, 192
+handling long, 511-523
+search engines, 238
+installing, 42
+rewards, 14
+training, 502
+implementing, 631
+on auxiliary tasks, 350
+policies, 14, 612
+penalties, 14
+modules, 540
+training, 20, 72
+inertia, 243
+downloading, 46
+agents, 14

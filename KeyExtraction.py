@@ -1,14 +1,15 @@
 import os
 from tkinter import Tk
 from tkinter.filedialog import askdirectory, askopenfilename
+import pytextrank
 import spacy
-from sklearn.metrics import precision_score, recall_score, f1_score
+from sklearn.metrics import precision_recall_fscore_support
 import nltk
 from nltk.stem import WordNetLemmatizer
-import re
+import re  # Import regular expression library
 import networkx as nx
 import matplotlib.pyplot as plt
-from keybert import KeyBERT  # Import KeyBERT
+import string
 
 nltk.download('wordnet')
 lemmatizer = WordNetLemmatizer()
@@ -54,46 +55,74 @@ def load_text_from_file(filepath):
 def load_keywords_from_file(filepath):
     try:
         with open(filepath, 'r', encoding='utf-8') as file:
-            keywords = [re.sub(r',\s*\d+$', '', line.strip().lower()) for line in file]
-        return keywords
+            keywords = [lemmatizer.lemmatize(re.sub(r',\s*\d+$', '', line.strip().lower())) for line in file]
+        return set(keywords)
     except Exception as e:
         print(f"Error loading keywords from {filepath}: {e}")
         return None
-
+    
 reference_keywords = load_keywords_from_file(keywords_file)
 
 if not reference_keywords:
     print("No keywords loaded from the file.")
     exit()
 
-nlp = spacy.load("en_core_web_sm") #Using Small spacy model.
-kb = KeyBERT('distilbert-base-nli-mean-tokens') #Load KeyBERT model.
+nlp = spacy.load("en_core_web_sm")
+nlp.add_pipe("textrank")
 
-def extract_keywords_keybert(text, num_keywords=10):
-    keywords = kb.extract_keywords(text, keyphrase_ngram_range=(1, 3), stop_words='english', highlight=False, top_n=num_keywords)
-    return [keyword[0] for keyword in keywords]
+def extract_keywords_pytextrank(text, num_keywords=100):
+    doc = nlp(text)
+    keywords = [
+        lemmatizer.lemmatize(phrase.text.strip().lower())
+        for phrase in doc._.phrases
+        if not any(char in string.punctuation for char in phrase.text)
+    ]
+    return list(set(keywords[:num_keywords]))
 
 def evaluate_keywords(reference, predicted):
-    common = set(reference) & set(predicted)
-    precision = len(common) / len(predicted) if predicted else 0
-    recall = len(common) / len(reference) if reference else 0
-    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) else 0
+    true_positives = 0
+    for kw in predicted:
+        if kw in reference:
+            true_positives += 1
+
+    precision = 0
+    if len(predicted) > 0:
+        precision = true_positives / len(predicted)
+
+    recall = 0
+    if len(reference) > 0:
+        recall = true_positives / len(reference)
+
+    f1 = 0
+    if precision + recall > 0:
+        f1 = 2 * (precision * recall) / (precision + recall)
+
     return precision, recall, f1
 
 def build_concept_map(keywords, text):
     """Builds a concept map from the extracted keywords and text."""
     G = nx.Graph()
-    G.add_nodes_from(keywords)
+    unique_keywords = list(set(keywords)) # Use unique extracted keywords
+    G.add_nodes_from(unique_keywords)
 
-    for i, keyword1 in enumerate(keywords):
-        for j, keyword2 in enumerate(keywords):
-            if i < j:
-                if keyword1 in text.lower() and keyword2 in text.lower():
-                    G.add_edge(keyword1, keyword2)
+    # Simple co-occurrence based relationship detection (adjust window_size as needed)
+    window_size = 5
+    words = re.findall(r'\b\w+\b', text.lower()) # Tokenize the text
 
-    plt.figure(figsize=(12, 10))
-    pos = nx.spring_layout(G, k=0.5)
-    nx.draw(G, pos, with_labels=True, node_color='skyblue', node_size=1500, edge_color='gray')
+    for i in range(len(words) - window_size + 1):
+        window = words[i : i + window_size]
+        for j, word1 in enumerate(window):
+            if word1 in unique_keywords:
+                for k, word2 in enumerate(window):
+                    if j < k and word2 in unique_keywords:
+                        if G.has_edge(word1, word2):
+                            G[word1][word2]['weight'] = G[word1][word2].get('weight', 0) + 1
+                        else:
+                            G.add_edge(word1, word2, weight=1)
+
+    # Draw the graph
+    pos = nx.spring_layout(G)  # Layout algorithm
+    nx.draw(G, pos, with_labels=True, node_color='skyblue', node_size=1500, edge_color='gray', width=[d['weight'] for (u, v, d) in G.edges(data=True)])
     plt.title("Concept Map")
     plt.show()
 
@@ -103,11 +132,12 @@ for filename in os.listdir(train_dir):
     if os.path.isfile(train_file_path):
         train_text = load_text_from_file(train_file_path)
         if train_text:
-            nlp(train_text) #Process training data with spacy.
+            nlp(train_text)
+            print(f"Processed training file: {filename}")
 
 print("\nEvaluating on Test Data...")
-all_extracted_keywords = []
-all_test_texts = []
+all_extracted_keywords = [] # Store extracted keywords for all test files.
+all_test_texts = [] # Store all test texts
 
 all_precisions = []
 all_recalls = []
@@ -118,10 +148,10 @@ for filename in os.listdir(test_dir):
     if os.path.isfile(test_file_path):
         test_text = load_text_from_file(test_file_path)
         if test_text:
-            extracted_keywords = extract_keywords_keybert(test_text) #Using KeyBERT for keyword extraction.
+            extracted_keywords = extract_keywords_pytextrank(test_text)
 
-            all_extracted_keywords.extend(extracted_keywords)
-            all_test_texts.append(test_text)
+            all_extracted_keywords.extend(extracted_keywords) # Append to the global list
+            all_test_texts.append(test_text) # Append to the global List
 
             precision, recall, f1 = evaluate_keywords(reference_keywords, extracted_keywords)
             all_precisions.append(precision)
@@ -129,7 +159,9 @@ for filename in os.listdir(test_dir):
             all_f1s.append(f1)
 
             print(f"File: {filename}, Precision: {precision}, Recall: {recall}, F1-score: {f1}")
-            
+            print(f"   Extracted: {extracted_keywords[:10]}") # Print a few extracted keywords
+            # print(f"   Reference: {reference_keywords}")
+
 if all_f1s:
     avg_precision = sum(all_precisions) / len(all_precisions)
     avg_recall = sum(all_recalls) / len(all_recalls)
@@ -141,6 +173,7 @@ if all_f1s:
 else:
     print("No test files processed.")
 
+# Build and display the concept map after processing all test files
 if all_extracted_keywords and all_test_texts:
-    combined_text = " ".join(all_test_texts)
+    combined_text = " ".join(all_test_texts) # Combine all test texts
     build_concept_map(all_extracted_keywords, combined_text)

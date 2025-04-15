@@ -94,7 +94,6 @@ attention mechanism, 526, 549
 explainability and, 553
 Transformer architecture, 554
 visual attention, 552
-attributes, 8
 autoencoders, 567, 569
 convolutional, 579
 denoising, 581
@@ -119,7 +118,6 @@ average pooling layer, 459
 Average Precision (AP), 491
 backpropagation, 289-292
 backpropagation through time (BPTT), 502
-bag of words, 438
 bagging and pasting, 192
 out-of-bag evaluation, 195
 in Scikit-Learn, 194
@@ -152,7 +150,6 @@ biological neurons, 280
 BIRCH algorithm, 259
 black box models, 178
 black box stochastic variational inference (BBSVI), 273
-blenders, 208
 Boltzmann machines, 775
 AdaBoost, 200
 Gradient Boosting, 203

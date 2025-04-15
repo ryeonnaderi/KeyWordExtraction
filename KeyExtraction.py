@@ -60,7 +60,7 @@ def load_keywords_from_file(filepath):
     except Exception as e:
         print(f"Error loading keywords from {filepath}: {e}")
         return None
-    
+
 reference_keywords = load_keywords_from_file(keywords_file)
 
 if not reference_keywords:
@@ -70,7 +70,7 @@ if not reference_keywords:
 nlp = spacy.load("en_core_web_sm")
 nlp.add_pipe("textrank")
 
-def extract_keywords_pytextrank(text, num_keywords=100):
+def extract_keywords_pytextrank(text, num_keywords=200):
     doc = nlp(text)
     keywords = [
         lemmatizer.lemmatize(phrase.text.strip().lower())
@@ -132,16 +132,17 @@ for filename in os.listdir(train_dir):
     if os.path.isfile(train_file_path):
         train_text = load_text_from_file(train_file_path)
         if train_text:
-            nlp(train_text)
-            print(f"Processed training file: {filename}")
+            extracted_keywords_train = extract_keywords_pytextrank(train_text)
+            num_extracted_train = len(extracted_keywords_train)
+            print(f"Processed training file: {filename}, Extracted Keywords: {num_extracted_train}")
 
 print("\nEvaluating on Test Data...")
-all_extracted_keywords = [] # Store extracted keywords for all test files.
-all_test_texts = [] # Store all test texts
+all_extracted_keywords = {} # Store extracted keywords for each test file.
+all_test_texts = {} # Store test texts with filenames as keys
 
-all_precisions = []
-all_recalls = []
-all_f1s = []
+all_precisions = {}
+all_recalls = {}
+all_f1s = {}
 
 for filename in os.listdir(test_dir):
     test_file_path = os.path.join(test_dir, filename)
@@ -149,31 +150,36 @@ for filename in os.listdir(test_dir):
         test_text = load_text_from_file(test_file_path)
         if test_text:
             extracted_keywords = extract_keywords_pytextrank(test_text)
+            num_extracted = len(extracted_keywords)
 
-            all_extracted_keywords.extend(extracted_keywords) # Append to the global list
-            all_test_texts.append(test_text) # Append to the global List
+            all_extracted_keywords[filename] = extracted_keywords
+            all_test_texts[filename] = test_text
 
             precision, recall, f1 = evaluate_keywords(reference_keywords, extracted_keywords)
-            all_precisions.append(precision)
-            all_recalls.append(recall)
-            all_f1s.append(f1)
+            all_precisions[filename] = precision
+            all_recalls[filename] = recall
+            all_f1s[filename] = f1
 
-            print(f"File: {filename}, Precision: {precision}, Recall: {recall}, F1-score: {f1}")
-            print(f"   Extracted: {extracted_keywords[:10]}") # Print a few extracted keywords
+            print(f"File: {filename}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1-score: {f1:.4f}, Extracted Keywords: {num_extracted}")
+            print(f"   First 10 Extracted: {extracted_keywords[:10]}")
             # print(f"   Reference: {reference_keywords}")
 
 if all_f1s:
-    avg_precision = sum(all_precisions) / len(all_precisions)
-    avg_recall = sum(all_recalls) / len(all_recalls)
-    avg_f1 = sum(all_f1s) / len(all_f1s)
+    avg_precision = sum(all_precisions.values()) / len(all_precisions)
+    avg_recall = sum(all_recalls.values()) / len(all_recalls)
+    avg_f1 = sum(all_f1s.values()) / len(all_f1s)
 
-    print(f"\nAverage Precision: {avg_precision}")
-    print(f"Average Recall: {avg_recall}")
-    print(f"Average F1-score: {avg_f1}")
+    print(f"\nAverage Precision: {avg_precision:.4f}")
+    print(f"Average Recall: {avg_recall:.4f}")
+    print(f"Average F1-score: {avg_f1:.4f}")
 else:
     print("No test files processed.")
 
 # Build and display the concept map after processing all test files
 if all_extracted_keywords and all_test_texts:
-    combined_text = " ".join(all_test_texts) # Combine all test texts
-    build_concept_map(all_extracted_keywords, combined_text)
+    combined_extracted_keywords = []
+    combined_text = ""
+    for filename in all_test_texts:
+        combined_extracted_keywords.extend(all_extracted_keywords[filename])
+        combined_text += all_test_texts[filename] + " "
+    build_concept_map(combined_extracted_keywords, combined_text)

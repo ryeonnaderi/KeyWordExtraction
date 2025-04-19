@@ -1,185 +1,340 @@
 import os
 from tkinter import Tk
-from tkinter.filedialog import askdirectory, askopenfilename
 import pytextrank
 import spacy
-from sklearn.metrics import precision_recall_fscore_support
 import nltk
 from nltk.stem import WordNetLemmatizer
-import re  # Import regular expression library
+import re
 import networkx as nx
 import matplotlib.pyplot as plt
 import string
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+
 
 nltk.download('wordnet')
 lemmatizer = WordNetLemmatizer()
 
-def get_directory_path(title):
-    Tk().withdraw()
-    dir_path = askdirectory(title=title)
-    if not dir_path:
-        print("No directory selected.")
-    return dir_path
+NUM_KEYWORDS = 200
+COOCCURRENCE_WINDOW = 5
+SPACY_MODEL = "en_core_web_md"
 
-def get_file_path(title):
-    Tk().withdraw()
-    file_path = askopenfilename(title=title)
-    if not file_path:
-        print("No file selected.")
-    return file_path
+# Define data directories and files more explicitly
+TRAIN_DATA_DIR = "./Train_data"
+TEST_DATA_DIR =  "./Test_Data"
+KEYWORDS_FILE =  "./Keywords.txt"
+INDEX_BY_CHAPTER = "./index_by_chapter.txt"
 
-print("Select Training Data Directory:")
-train_dir = get_directory_path("Select Training Data Directory")
-print("Selected Training Directory:", train_dir)
 
-print("\nSelect Test Data Directory:")
-test_dir = get_directory_path("Select Test Data Directory")
-print("Selected Test Directory:", test_dir)
-
-print("\nSelect Keywords File:")
-keywords_file = get_file_path("Select Keywords File")
-print("Selected Keywords File:", os.path.basename(keywords_file))
-
-if not (train_dir and test_dir and keywords_file):
-    exit()
-
-def load_text_from_file(filepath):
+def load_text(filepath):
     try:
-        with open(filepath, 'r', encoding='utf-8') as file:
-            text = file.read()
-        return text
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read()
     except Exception as e:
-        print(f"Error loading file {filepath}: {e}")
+        print(f"Error loading {filepath}: {e}")
         return None
 
-def load_keywords_from_file(filepath):
+def load_reference_keywords(filepath):
     try:
-        with open(filepath, 'r', encoding='utf-8') as file:
-            keywords = [lemmatizer.lemmatize(re.sub(r',\s*\d+$', '', line.strip().lower())) for line in file]
-        return set(keywords)
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return {lemmatizer.lemmatize(re.sub(r',\s*\d+$', '', line.strip().lower())) for line in f}
     except Exception as e:
         print(f"Error loading keywords from {filepath}: {e}")
         return None
 
-reference_keywords = load_keywords_from_file(keywords_file)
-
-if not reference_keywords:
-    print("No keywords loaded from the file.")
-    exit()
-
-nlp = spacy.load("en_core_web_sm")
-nlp.add_pipe("textrank")
-
-def extract_keywords_pytextrank(text, num_keywords=200):
+def extract_keywords_pytextrank(text, nlp, num_keywords):
     doc = nlp(text)
-    keywords = [
-        lemmatizer.lemmatize(phrase.text.strip().lower())
-        for phrase in doc._.phrases
-        if not any(char in string.punctuation for char in phrase.text)
-    ]
-    return list(set(keywords[:num_keywords]))
+    textrank_keywords = {}
+    stopwords = nlp.Defaults.stop_words.union({"introduction", "conclusion", "however", "therefore", "in addition", "also", "furthermore"})
 
-def evaluate_keywords(reference, predicted):
-    true_positives = 0
-    for kw in predicted:
-        if kw in reference:
-            true_positives += 1
+    # Extract keywords from TextRank and store with their rank
+    for phrase in doc._.phrases:
+        cleaned = phrase.text.strip().lower()
+        if not any(char in string.punctuation for char in cleaned):
+            tokenized = nlp(cleaned)
+            valid_tokens = [token.text for token in tokenized if not token.is_stop and not token.is_punct and token.text not in stopwords]
+            if valid_tokens:
+                lemmatized = lemmatizer.lemmatize(" ".join(valid_tokens))
+                textrank_keywords[lemmatized] = phrase.rank
 
-    precision = 0
-    if len(predicted) > 0:
-        precision = true_positives / len(predicted)
+    noun_chunks = {}
+    # Extract and filter noun chunks
+    for chunk in doc.noun_chunks:
+        cleaned_chunk = chunk.text.strip().lower()
+        tokenized_chunk = nlp(cleaned_chunk)
+        valid_chunk_tokens = [token.text for token in tokenized_chunk if not token.is_stop and not token.is_punct and token.text not in stopwords]
+        if valid_chunk_tokens and 1 < len(valid_chunk_tokens) <= 4: # Consider 2-4 word noun chunks
+            lemmatized_chunk = lemmatizer.lemmatize(" ".join(valid_chunk_tokens))
+            noun_chunks[lemmatized_chunk] = noun_chunks.get(lemmatized_chunk, 0) + 1 # Simple frequency count
 
-    recall = 0
-    if len(reference) > 0:
-        recall = true_positives / len(reference)
+    # Prioritize and Weight
+    final_keywords = {}
+    for kw, rank in textrank_keywords.items():
+        final_keywords[kw] = rank * 1.2 # Slightly lower TextRank base weight
 
-    f1 = 0
-    if precision + recall > 0:
-        f1 = 2 * (precision * recall) / (precision + recall)
+    for kw, freq in noun_chunks.items():
+        if kw in final_keywords:
+            final_keywords[kw] += 1.0 * freq # Increase weight for overlapping
+        else:
+            final_keywords[kw] = 0.4 * freq # Lower weight if only a noun chunk
 
+    # Sort by weight and take top N
+    sorted_keywords = sorted(final_keywords.items(), key=lambda item: item[1], reverse=True)
+    return [kw for kw in sorted_keywords[:num_keywords]]
+
+def get_vector(nlp, text):
+    doc = nlp(text)
+    vectors = [token.vector for token in doc]
+    if vectors:
+        return np.mean(vectors, axis=0).reshape(1, -1)
+    else:
+        return np.zeros((1, nlp.vocab.vectors_length))
+
+
+def evaluate_with_embeddings(nlp, reference, predicted, similarity_threshold=0.6):
+    tp = 0
+    reference_matched = [False] * len(reference)
+    predicted_matched = [False] * len(predicted)
+
+    for i, pred_kw in enumerate(predicted):
+        pred_vec = get_vector(nlp, pred_kw)
+        for j, ref_kw in enumerate(reference):
+            ref_vec = get_vector(nlp, ref_kw)
+            if np.any(pred_vec) and np.any(ref_vec):
+                # Ensure both vectors are 2D
+                if ref_vec.ndim == 1:
+                    ref_vec = ref_vec.reshape(1, -1)
+                similarity = cosine_similarity(pred_vec, ref_vec)[0][0]
+                if similarity >= similarity_threshold and not reference_matched[j]:
+                    tp += 1
+                    reference_matched[j] = True
+                    predicted_matched[i] = True
+                    break
+
+    precision = tp / len(predicted) if predicted else 0
+    recall = tp / len(reference) if reference else 0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0
     return precision, recall, f1
 
-def build_concept_map(keywords, text):
-    """Builds a concept map from the extracted keywords and text."""
+
+def evaluate_model(test_results, reference_keywords_by_chapter, nlp, similarity_threshold=0.6):
+    if not reference_keywords_by_chapter:
+        print("Reference keywords by chapter not loaded. Skipping chapter-based evaluation.")
+        return
+
+    chapter_precisions = {}
+    chapter_recalls = {}
+    chapter_f1s = {}
+
+    for filename, result in test_results.items():
+        predicted_keywords_with_scores = result["extracted_keywords"] # This seems to be a list of tuples
+        predicted_keywords = [kw for kw, score in predicted_keywords_with_scores] # Extract just the keywords
+        chapter = result["chapter"]
+        if chapter and chapter in reference_keywords_by_chapter:
+            reference_keywords = reference_keywords_by_chapter[chapter]
+            precision, recall, f1 = evaluate_with_embeddings(nlp, list(reference_keywords), predicted_keywords, similarity_threshold=similarity_threshold)
+            chapter_precisions.setdefault(chapter, []).append(precision)
+            chapter_recalls.setdefault(chapter, []).append(recall)
+            chapter_f1s.setdefault(chapter, []).append(f1)
+            print(f"\nEvaluation for {filename} (Chapter {chapter}):")
+            print(f"  Precision: {precision:.4f}, Recall: {recall:.4f}, F1-score: {f1:.4f}")
+
+    print("\n--- Chapter-wise Evaluation Summary (with Embeddings, Threshold={:.1f}) ---".format(similarity_threshold))
+    for chapter in sorted(chapter_precisions.keys()):
+        avg_precision = sum(chapter_precisions[chapter]) / len(chapter_precisions[chapter]) if chapter_precisions[chapter] else 0
+        avg_recall = sum(chapter_recalls[chapter]) / len(chapter_recalls[chapter]) if chapter_recalls[chapter] else 0
+        avg_f1 = sum(chapter_f1s[chapter]) / len(chapter_f1s[chapter]) if chapter_f1s[chapter] else 0
+        print(f"Chapter {chapter}:")
+        print(f"  Average Precision: {avg_precision:.4f}")
+        print(f"  Average Recall: {avg_recall:.4f}")
+        print(f"  Average F1-score: {avg_f1:.4f}")
+
+
+def process_data(directory_path, nlp):
+    results = {}
+    for filename in os.listdir(directory_path):
+        filepath = os.path.join(directory_path, filename)
+        if os.path.isfile(filepath):
+            text = load_text(filepath)
+            if text:
+                all_extracted_keywords = extract_keywords_pytextrank(text, nlp, num_keywords=NUM_KEYWORDS)
+                # Assuming chapter can be inferred from the filename (e.g., ch1.txt)
+                chapter = filename.replace("ch", "").replace(".txt", "")
+                results[filename] = {
+                    "extracted_keywords": all_extracted_keywords,
+                    "all_extracted_keywords": all_extracted_keywords,
+                    "text": text,
+                    "chapter": chapter
+                }
+                print(f"Processed: {filename}, Extracted Keywords: {len(all_extracted_keywords)}")
+    return results
+
+
+def build_concept_map(keywords, nlp, similarity_threshold=0.6):
     G = nx.Graph()
-    unique_keywords = list(set(keywords)) # Use unique extracted keywords
-    G.add_nodes_from(unique_keywords)
+    unique_keywords = list(set(keywords))
+    keyword_vectors = {}
 
-    # Simple co-occurrence based relationship detection (adjust window_size as needed)
-    window_size = 5
-    words = re.findall(r'\b\w+\b', text.lower()) # Tokenize the text
+    print(f"Number of unique keywords: {len(unique_keywords)}")
 
-    for i in range(len(words) - window_size + 1):
-        window = words[i : i + window_size]
-        for j, word1 in enumerate(window):
-            if word1 in unique_keywords:
-                for k, word2 in enumerate(window):
-                    if j < k and word2 in unique_keywords:
-                        if G.has_edge(word1, word2):
-                            G[word1][word2]['weight'] = G[word1][word2].get('weight', 0) + 1
-                        else:
-                            G.add_edge(word1, word2, weight=1)
+    # Get spaCy vectors for each unique keyword
+    for keyword in unique_keywords:
+        if keyword in nlp.vocab:
+            keyword_vectors[keyword] = nlp.vocab[keyword].vector.reshape(1, -1)
+            G.add_node(keyword)
+            print(f"Added node: {keyword}")
+        else:
+            print(f"Warning: Keyword '{keyword}' not in spaCy vocabulary.")
 
-    # Draw the graph
-    pos = nx.spring_layout(G)  # Layout algorithm
-    nx.draw(G, pos, with_labels=True, node_color='skyblue', node_size=1500, edge_color='gray', width=[d['weight'] for (u, v, d) in G.edges(data=True)])
-    plt.title("Concept Map")
+    print(f"Number of nodes in the graph: {G.number_of_nodes()}")
+
+    # Add edges based on cosine similarity
+    num_edges = 0
+    for i, keyword1 in enumerate(G.nodes()):
+        for j, keyword2 in enumerate(list(G.nodes())[i+1:]):
+            if keyword1 in keyword_vectors and keyword2 in keyword_vectors:
+                similarity = cosine_similarity(keyword_vectors[keyword1], keyword_vectors[keyword2])[0][0]
+                if similarity >= similarity_threshold:
+                    G.add_edge(keyword1, keyword2, weight=similarity)
+                    num_edges += 1
+                    print(f"Added edge between '{keyword1}' and '{keyword2}' with similarity: {similarity:.2f}")
+
+    print(f"Number of edges in the graph: {G.number_of_edges()}")
+
+    # --- Visualization ---
+    pos = nx.spring_layout(G, k=0.3, iterations=50)
+
+    node_sizes = [2000 for _ in G.nodes()]
+    node_colors = 'lightgreen'
+    edge_widths = [d['weight'] * 5 for (u, v, d) in G.edges(data=True)]
+    edge_colors = [d['weight'] for (u, v, d) in G.edges(data=True)]
+    cmap = plt.cm.viridis
+
+    plt.figure(figsize=(12, 10))
+    edge_collection = nx.draw_networkx_edges(G, pos,
+                                            edge_color=edge_colors,
+                                            width=edge_widths,
+                                            edge_cmap=cmap,
+                                            alpha=0.7)
+    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=node_sizes, alpha=0.7)
+    nx.draw_networkx_labels(G, pos, font_size=8, font_weight='bold')
+
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=min(edge_colors) if edge_colors else 0, vmax=max(edge_colors) if edge_colors else 1))
+    sm.set_array([])
+    cbar = plt.colorbar(edge_collection)
+
+    plt.title("Concept Map", fontsize=16)
+    plt.axis('off')
+    plt.tight_layout()
     plt.show()
 
-print("\nProcessing Training Data...")
-for filename in os.listdir(train_dir):
-    train_file_path = os.path.join(train_dir, filename)
-    if os.path.isfile(train_file_path):
-        train_text = load_text_from_file(train_file_path)
-        if train_text:
-            extracted_keywords_train = extract_keywords_pytextrank(train_text)
-            num_extracted_train = len(extracted_keywords_train)
-            print(f"Processed training file: {filename}, Extracted Keywords: {num_extracted_train}")
+def build_concept_map_semantic(keywords, nlp, similarity_threshold=0.6):
+    G = nx.Graph()
+    unique_keywords = list(set(keywords))
+    keyword_vectors = {}
+    valid_keywords = []
 
-print("\nEvaluating on Test Data...")
-all_extracted_keywords = {} # Store extracted keywords for each test file.
-all_test_texts = {} # Store test texts with filenames as keys
+    print(f"Number of unique keywords: {len(unique_keywords)}")
 
-all_precisions = {}
-all_recalls = {}
-all_f1s = {}
+    # Get spaCy vectors for each unique keyword, only if in vocabulary
+    for keyword in unique_keywords:
+        if keyword in nlp.vocab and nlp.vocab[keyword].has_vector:
+            vector = nlp.vocab[keyword].vector
+            if not np.all(vector == 0) and not np.any(np.isnan(vector)):
+                keyword_vectors[keyword] = vector.reshape(1, -1)
+                G.add_node(keyword)
+                valid_keywords.append(keyword)
+                print(f"Added node: {keyword}")
+            
+    print(f"Number of nodes in the graph: {G.number_of_nodes()}")
 
-for filename in os.listdir(test_dir):
-    test_file_path = os.path.join(test_dir, filename)
-    if os.path.isfile(test_file_path):
-        test_text = load_text_from_file(test_file_path)
-        if test_text:
-            extracted_keywords = extract_keywords_pytextrank(test_text)
-            num_extracted = len(extracted_keywords)
+    # Add edges based on cosine similarity between valid keywords
+    num_edges = 0
+    edges = []
+    edge_weights = []
+    for i, keyword1 in enumerate(valid_keywords):
+        for j, keyword2 in enumerate(valid_keywords[i+1:]):
+            if keyword1 in keyword_vectors and keyword2 in keyword_vectors:
+                similarity = cosine_similarity(keyword_vectors[keyword1], keyword_vectors[keyword2])[0][0]
+                if similarity >= similarity_threshold:
+                    G.add_edge(keyword1, keyword2, weight=similarity)
+                    edges.append((keyword1, keyword2))
+                    edge_weights.append(similarity)
+                    num_edges += 1
+                    print(f"Added edge between '{keyword1}' and '{keyword2}' with similarity: {similarity:.2f}")
 
-            all_extracted_keywords[filename] = extracted_keywords
-            all_test_texts[filename] = test_text
+    print(f"Number of edges in the graph: {G.number_of_edges()}")
 
-            precision, recall, f1 = evaluate_keywords(reference_keywords, extracted_keywords)
-            all_precisions[filename] = precision
-            all_recalls[filename] = recall
-            all_f1s[filename] = f1
+    # --- Visualization ---
+    if G.number_of_nodes() > 0 and G.number_of_edges() > 0:
+        pos = nx.spring_layout(G, k=0.3, iterations=50)
 
-            print(f"File: {filename}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1-score: {f1:.4f}, Extracted Keywords: {num_extracted}")
-            print(f"   First 10 Extracted: {extracted_keywords[:10]}")
-            # print(f"   Reference: {reference_keywords}")
+        node_sizes = [2000 for _ in G.nodes()]
+        node_colors = 'lightgreen'
+        cmap = plt.cm.viridis
 
-if all_f1s:
-    avg_precision = sum(all_precisions.values()) / len(all_precisions)
-    avg_recall = sum(all_recalls.values()) / len(all_recalls)
-    avg_f1 = sum(all_f1s.values()) / len(all_f1s)
+        plt.figure(figsize=(12, 10))
+        ax = plt.gca()
 
-    print(f"\nAverage Precision: {avg_precision:.4f}")
-    print(f"Average Recall: {avg_recall:.4f}")
-    print(f"Average F1-score: {avg_f1:.4f}")
-else:
-    print("No test files processed.")
+        nx.draw_networkx_edges(G, pos, edgelist=edges, edge_color=edge_weights,
+                               width=5, edge_cmap=cmap, alpha=0.7)
+        nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=node_sizes, alpha=0.7)
+        nx.draw_networkx_labels(G, pos, font_size=8, font_weight='bold')
 
-# Build and display the concept map after processing all test files
-if all_extracted_keywords and all_test_texts:
-    combined_extracted_keywords = []
-    combined_text = ""
-    for filename in all_test_texts:
-        combined_extracted_keywords.extend(all_extracted_keywords[filename])
-        combined_text += all_test_texts[filename] + " "
-    build_concept_map(combined_extracted_keywords, combined_text)
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=min(edge_weights) if edge_weights else 0, vmax=max(edge_weights) if edge_weights else 1))
+        sm.set_array([])
+        cbar = plt.colorbar(sm, ax=ax, label='Semantic Similarity')
+
+        plt.title("Semantic Similarity Concept Map", fontsize=16)
+        plt.axis('off')
+        plt.tight_layout()
+        plt.show()
+    else:
+        print("No valid nodes or edges to draw the concept map.")
+
+def load_index_by_chapter(filepath):
+    chapter_keywords = {}
+    current_chapter = None
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("Chapter"):
+                    current_chapter = line.split()[1]
+                    chapter_keywords[current_chapter] = set()
+                elif current_chapter and line:
+                    keyword = lemmatizer.lemmatize(line.lower())
+                    chapter_keywords[current_chapter].add(keyword)
+    except Exception as e:
+        print(f"Error loading index by chapter from {filepath}: {e}")
+        return None
+    return chapter_keywords
+
+
+if __name__ == "__main__":
+    nlp = spacy.load(SPACY_MODEL)
+    nlp.add_pipe("textrank")
+
+    index_by_chapter = load_index_by_chapter(INDEX_BY_CHAPTER)
+    if index_by_chapter:
+        print("\nLoaded Index by Chapter:")
+        for chapter, keywords in index_by_chapter.items():
+            print(f"  Chapter {chapter}: {len(keywords)} keywords")
+    else:
+        print("\nCould not load index by chapter.")
+
+    print("\nProcessing Training Data...")
+    train_results = process_data(TRAIN_DATA_DIR, nlp)
+
+    print("\nProcessing Test Data...")
+    test_results = process_data(TEST_DATA_DIR, nlp)
+
+    print("\nEvaluating Model on Test Data (against reference keywords by chapter)...")
+    evaluate_model(test_results, index_by_chapter, nlp, similarity_threshold=0.6)
+
+    all_extracted_test_keywords = [res["extracted_keywords"] for res in test_results.values()]
+    combined_keywords = [kw for sublist in all_extracted_test_keywords for kw, score in sublist] # Extract only the keyword
+    if combined_keywords and nlp:
+        build_concept_map(combined_keywords, nlp)
+    else:
+        print("Warning: Could not build concept map. Ensure keywords are extracted and spaCy model is loaded.")

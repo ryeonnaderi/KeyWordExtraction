@@ -16,7 +16,6 @@ nltk.download('wordnet')
 lemmatizer = WordNetLemmatizer()
 
 NUM_KEYWORDS = 200
-COOCCURRENCE_WINDOW = 5
 SPACY_MODEL = "en_core_web_md"
 
 # Define data directories and files more explicitly
@@ -183,9 +182,7 @@ def build_concept_map(keywords, nlp, similarity_threshold=0.6):
             keyword_vectors[keyword] = nlp.vocab[keyword].vector.reshape(1, -1)
             G.add_node(keyword)
             print(f"Added node: {keyword}")
-        else:
-            print(f"Warning: Keyword '{keyword}' not in spaCy vocabulary.")
-
+        
     print(f"Number of nodes in the graph: {G.number_of_nodes()}")
 
     # Add edges based on cosine similarity
@@ -207,25 +204,26 @@ def build_concept_map(keywords, nlp, similarity_threshold=0.6):
     node_sizes = [2000 for _ in G.nodes()]
     node_colors = 'lightgreen'
     edge_widths = [d['weight'] * 5 for (u, v, d) in G.edges(data=True)]
-    edge_colors = [d['weight'] for (u, v, d) in G.edges(data=True)]
+    edge_weights = np.array([d['weight'] for (u, v, d) in G.edges(data=True)]) # Convert to NumPy array
+
     cmap = plt.cm.viridis
 
-    plt.figure(figsize=(12, 10))
+    fig, ax = plt.subplots(figsize=(12, 10))  # Create a figure and an Axes object
+
     edge_collection = nx.draw_networkx_edges(G, pos,
-                                            edge_color=edge_colors,
+                                            edge_color=edge_weights, # Pass the NumPy array of weights
                                             width=edge_widths,
-                                            edge_cmap=cmap,
-                                            alpha=0.7)
-    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=node_sizes, alpha=0.7)
-    nx.draw_networkx_labels(G, pos, font_size=8, font_weight='bold')
+                                            edge_cmap=cmap,         # Use the colormap
+                                            alpha=0.7,
+                                            ax=ax)  # Pass the Axes object to the drawing function
+    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=node_sizes, alpha=0.7, ax=ax)
+    nx.draw_networkx_labels(G, pos, font_size=8, font_weight='bold', ax=ax)
 
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=min(edge_colors) if edge_colors else 0, vmax=max(edge_colors) if edge_colors else 1))
-    sm.set_array([])
-    cbar = plt.colorbar(edge_collection)
+    cbar = fig.colorbar(edge_collection, ax=ax, label='Semantic Similarity') # Add a label
 
-    plt.title("Concept Map", fontsize=16)
-    plt.axis('off')
-    plt.tight_layout()
+    ax.set_title("Concept Map", fontsize=16)  # Use ax.set_title
+    ax.axis('off')  # Use ax.axis('off')
+    fig.tight_layout()  # Use fig.tight_layout
     plt.show()
 
 def build_concept_map_semantic(keywords, nlp, similarity_threshold=0.6):
@@ -336,5 +334,4 @@ if __name__ == "__main__":
     combined_keywords = [kw for sublist in all_extracted_test_keywords for kw, score in sublist] # Extract only the keyword
     if combined_keywords and nlp:
         build_concept_map(combined_keywords, nlp)
-    else:
-        print("Warning: Could not build concept map. Ensure keywords are extracted and spaCy model is loaded.")
+   

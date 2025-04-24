@@ -1,0 +1,80 @@
+/home/scrub/.local/lib/python3.11/site-packages
+
+Loaded Index by Chapter:
+  Chapter 1: 93 keywords
+  Chapter 2: 86 keywords
+  Chapter 3: 47 keywords
+  Chapter 4: 78 keywords
+  Chapter 5: 45 keywords
+  Chapter 6: 48 keywords
+  Chapter 7: 45 keywords
+  Chapter 8: 62 keywords
+  Chapter 9: 104 keywords
+  Chapter 10: 128 keywords
+  Chapter 11: 82 keywords
+  Chapter 12: 60 keywords
+  Chapter 13: 52 keywords
+  Chapter 14: 88 keywords
+  Chapter 15: 60 keywords
+  Chapter 16: 81 keywords
+  Chapter 17: 77 keywords
+  Chapter 18: 97 keywords
+  Chapter 19: 119 keywords
+
+Processing Training Data...
+Processed: ch1.txt, Extracted Keywords: 200
+Processed: ch13.txt, Extracted Keywords: 200
+Processed: ch14.txt, Extracted Keywords: 200
+Processed: ch15.txt, Extracted Keywords: 200
+Processed: ch16.txt, Extracted Keywords: 200
+Processed: ch17.txt, Extracted Keywords: 200
+Processed: ch18.txt, Extracted Keywords: 200
+Processed: ch19.txt, Extracted Keywords: 200
+Processed: ch2.txt, Extracted Keywords: 200
+Processed: ch3.txt, Extracted Keywords: 200
+Processed: ch4.txt, Extracted Keywords: 200
+Processed: ch5.txt, Extracted Keywords: 200
+Processed: ch7.txt, Extracted Keywords: 200
+Processed: ch8.txt, Extracted Keywords: 200
+Processed: ch9.txt, Extracted Keywords: 200
+
+Processing Test Data...
+Processed: ch10.txt, Extracted Keywords: 200
+Processed: ch11.txt, Extracted Keywords: 200
+Processed: ch12.txt, Extracted Keywords: 200
+Processed: ch6.txt, Extracted Keywords: 200
+
+Evaluating Model on Test Data (against reference keywords by chapter)...
+
+Evaluation for ch10.txt (Chapter 10):
+  Precision: 0.4750, Recall: 0.7422, F1-score: 0.5793
+
+Evaluation for ch11.txt (Chapter 11):
+  Precision: 0.3100, Recall: 0.7561, F1-score: 0.4397
+
+Evaluation for ch12.txt (Chapter 12):
+  Precision: 0.2300, Recall: 0.7667, F1-score: 0.3538
+
+Evaluation for ch6.txt (Chapter 6):
+  Precision: 0.2050, Recall: 0.8542, F1-score: 0.3306
+
+--- Chapter-wise Evaluation Summary (with Embeddings, Threshold=0.6) ---
+Chapter 10:
+  Average Precision: 0.4750
+  Average Recall: 0.7422
+  Average F1-score: 0.5793
+Chapter 11:
+  Average Precision: 0.3100
+  Average Recall: 0.7561
+  Average F1-score: 0.4397
+Chapter 12:
+  Average Precision: 0.2300
+  Average Recall: 0.7667
+  Average F1-score: 0.3538
+Chapter 6:
+  Average Precision: 0.2050
+  Average Recall: 0.8542
+  Average F1-score: 0.3306
+Number of unique keywords: 718
+Number of nodes in the graph: 0
+Number of edges in the graph: 0

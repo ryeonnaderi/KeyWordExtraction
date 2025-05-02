@@ -15,8 +15,8 @@ import numpy as np
 nltk.download('wordnet')
 lemmatizer = WordNetLemmatizer()
 
-NUM_KEYWORDS = 200
-SPACY_MODEL = "en_core_web_md"
+NUM_KEYWORDS = 60
+SPACY_MODEL = "en_core_web_lg"
 
 # Define data directories and files more explicitly
 TRAIN_DATA_DIR = "./Train_data"
@@ -187,15 +187,16 @@ def build_concept_map(keywords, nlp, similarity_threshold=0.6):
 
     # Get spaCy vectors for each unique keyword, only if in vocabulary and has a vector
     for keyword in unique_keywords:
-        if keyword in nlp.vocab and nlp.vocab[keyword].has_vector:
-            vector = nlp.vocab[keyword].vector
-            if not np.all(vector == 0) and not np.any(np.isnan(vector)):
-                keyword_vectors[keyword] = vector.reshape(1, -1)
-                G.add_node(keyword)
-                valid_keywords.append(keyword)
-                print(f"Added node: {keyword}")
-
-    print(f"Number of nodes in the graph: {G.number_of_nodes()}")
+        tokens = nlp(keyword)
+        keyword_vectors_list = [token.vector for token in tokens if token.has_vector]
+        if keyword_vectors_list:
+            keyword_vector = np.mean(keyword_vectors_list, axis=0).reshape(1, -1)
+            keyword_vectors[keyword] = keyword_vector
+            G.add_node(keyword)
+            valid_keywords.append(keyword)
+            print(f"Added node (averaged): {keyword}")
+        else:
+            print(f"Keyword '{keyword}' has no vectors for its constituent words.")
 
     num_edges = 0
     edges = []
@@ -243,78 +244,6 @@ def build_concept_map(keywords, nlp, similarity_threshold=0.6):
     else:
         print("No valid nodes or edges to draw the concept map.")
 
-def build_concept_map_semantic(keywords, nlp, similarity_threshold=0.6):
-    G = nx.Graph()
-    unique_keywords = list(set(keywords))
-    keyword_vectors = {}
-    valid_keywords = []
-
-    print(f"Number of unique keywords: {len(unique_keywords)}")
-
-    # Get spaCy vectors for each unique keyword, only if in vocabulary and has a vector
-    for keyword in unique_keywords:
-        if keyword in nlp.vocab and nlp.vocab[keyword].has_vector:
-            vector = nlp.vocab[keyword].vector
-            if not np.all(vector == 0) and not np.any(np.isnan(vector)):
-                keyword_vectors[keyword] = vector.reshape(1, -1)
-                G.add_node(keyword)
-                valid_keywords.append(keyword)
-                print(f"Added node: {keyword}")
-
-    print(f"Number of nodes in the graph: {G.number_of_nodes()}")
-
-
-    num_edges = 0
-    edges = []
-    edge_weights = []
-    for i, keyword1 in enumerate(valid_keywords):
-        for j, keyword2 in enumerate(valid_keywords[i+1:]):
-            if keyword1 in keyword_vectors and keyword2 in keyword_vectors:
-                similarity = cosine_similarity(keyword_vectors[keyword1], keyword_vectors[keyword2])[0][0]
-                if similarity >= similarity_threshold:
-                    G.add_edge(keyword1, keyword2, weight=similarity)
-                    edges.append((keyword1, keyword2))
-                    edge_weights.append(similarity)
-                    num_edges += 1
-                    print(f"Added edge between '{keyword1}' and '{keyword2}' with similarity: {similarity:.2f}")
-
-    print(f"Number of edges in the graph: {G.number_of_edges()}")
-
-    # --- Visualization ---
-    if G.number_of_nodes() > 0 and G.number_of_edges() > 0:
-        pos = nx.spring_layout(G, k=0.3, iterations=50)
-
-        node_sizes = [2000 for _ in G.nodes()]
-        node_colors = 'lightgreen'
-        cmap = plt.cm.viridis
-
-        fig, ax = plt.subplots(figsize=(12, 10))
-
-        # Normalize edge weights to the range [0, 1]
-        norm = plt.Normalize(vmin=min(edge_weights) if edge_weights else 0, vmax=max(edge_weights) if edge_weights else 1)
-        mapped_edge_colors = cmap(norm(edge_weights))
-
-        # Draw the edges with the mapped colors
-        edge_collection = nx.draw_networkx_edges(G, pos, edgelist=edges, edge_color=mapped_edge_colors,
-                                               width=5, alpha=0.7, ax=ax)
-
-        # Draw the nodes
-        nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=node_sizes, alpha=0.7, ax=ax)
-
-        # Draw the labels
-        nx.draw_networkx_labels(G, pos, font_size=8, font_weight='bold', ax=ax)
-
-        # Create the colorbar
-        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-        sm.set_array([])  # For older versions of matplotlib
-        cbar = fig.colorbar(sm, ax=ax, label='Semantic Similarity')
-
-        ax.set_title("Concept Map", fontsize=16)
-        ax.axis('off')
-        fig.tight_layout()
-        plt.show()
-    else:
-        print("No valid nodes or edges to draw the concept map.")
 
 def load_index_by_chapter(filepath):
     chapter_keywords = {}
@@ -357,7 +286,6 @@ if __name__ == "__main__":
     evaluate_model(test_results, index_by_chapter, nlp, similarity_threshold=0.6)
 
     all_extracted_test_keywords = [res["extracted_keywords"] for res in test_results.values()]
-    combined_keywords = [kw for sublist in all_extracted_test_keywords for kw, score in sublist] 
+    combined_keywords = [kw for sublist in all_extracted_test_keywords for kw, score in sublist]
     if combined_keywords and nlp:
         build_concept_map(combined_keywords, nlp)
-   

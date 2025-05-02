@@ -15,10 +15,10 @@ import numpy as np
 nltk.download('wordnet')
 lemmatizer = WordNetLemmatizer()
 
-NUM_KEYWORDS = 60
+NUM_KEYWORDS = 30
 SPACY_MODEL = "en_core_web_lg"
 
-# Define data directories and files more explicitly
+# Define data directories and files
 TRAIN_DATA_DIR = "./Train_data"
 TEST_DATA_DIR =  "./Test_Data"
 KEYWORDS_FILE =  "./Keywords.txt"
@@ -62,22 +62,22 @@ def extract_keywords_pytextrank(text, nlp, num_keywords):
         cleaned_chunk = chunk.text.strip().lower()
         tokenized_chunk = nlp(cleaned_chunk)
         valid_chunk_tokens = [token.text for token in tokenized_chunk if not token.is_stop and not token.is_punct and token.text not in stopwords]
-        if valid_chunk_tokens and 1 < len(valid_chunk_tokens) <= 4: # Consider 2-4 word noun chunks
+        if valid_chunk_tokens and 1 < len(valid_chunk_tokens) <= 4: 
             lemmatized_chunk = lemmatizer.lemmatize(" ".join(valid_chunk_tokens))
-            noun_chunks[lemmatized_chunk] = noun_chunks.get(lemmatized_chunk, 0) + 1 # Simple frequency count
+            noun_chunks[lemmatized_chunk] = noun_chunks.get(lemmatized_chunk, 0) + 1 
 
     # Prioritize and Weight
     final_keywords = {}
     for kw, rank in textrank_keywords.items():
-        final_keywords[kw] = rank * 1.2 # Slightly lower TextRank base weight
+        final_keywords[kw] = rank * 1.2
 
     for kw, freq in noun_chunks.items():
         if kw in final_keywords:
-            final_keywords[kw] += 1.0 * freq # Increase weight for overlapping
+            final_keywords[kw] += 1.0 * freq
         else:
-            final_keywords[kw] = 0.4 * freq # Lower weight if only a noun chunk
+            final_keywords[kw] = 0.4 * freq 
 
-    # Sort by weight and take top N
+    
     sorted_keywords = sorted(final_keywords.items(), key=lambda item: item[1], reverse=True)
     return [kw for kw in sorted_keywords[:num_keywords]]
 
@@ -129,8 +129,8 @@ def evaluate_model(test_results, reference_keywords_by_chapter, nlp, similarity_
     all_f1s = []
 
     for filename, result in test_results.items():
-        predicted_keywords_with_scores = result["extracted_keywords"] # This seems to be a list of tuples
-        predicted_keywords = [kw for kw, score in predicted_keywords_with_scores] # Extract just the keywords
+        predicted_keywords_with_scores = result["extracted_keywords"]
+        predicted_keywords = [kw for kw, score in predicted_keywords_with_scores] 
         chapter = result["chapter"]
         if chapter and chapter in reference_keywords_by_chapter:
             reference_keywords = reference_keywords_by_chapter[chapter]
@@ -165,7 +165,7 @@ def process_data(directory_path, nlp):
             text = load_text(filepath)
             if text:
                 all_extracted_keywords = extract_keywords_pytextrank(text, nlp, num_keywords=NUM_KEYWORDS)
-                # Assuming chapter can be inferred from the filename (e.g., ch1.txt)
+                
                 chapter = filename.replace("ch", "").replace(".txt", "")
                 results[filename] = {
                     "extracted_keywords": all_extracted_keywords,
@@ -185,7 +185,7 @@ def build_concept_map(keywords, nlp, similarity_threshold=0.6):
 
     print(f"Number of unique keywords: {len(unique_keywords)}")
 
-    # Get spaCy vectors for each unique keyword, only if in vocabulary and has a vector
+    
     for keyword in unique_keywords:
         tokens = nlp(keyword)
         keyword_vectors_list = [token.vector for token in tokens if token.has_vector]
@@ -226,16 +226,15 @@ def build_concept_map(keywords, nlp, similarity_threshold=0.6):
 
         # Normalize edge weights to the range [0, 1]
         norm = plt.Normalize(vmin=min(edge_weights) if edge_weights else 0, vmax=max(edge_weights) if edge_weights else 1)
-        mapped_edge_colors = cmap(norm(edge_weights))
+        
 
-        edge_collection = nx.draw_networkx_edges(G, pos, edgelist=edges, edge_color=mapped_edge_colors,
-                                               width=5, alpha=0.7, ax=ax)
+        
         nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=node_sizes, alpha=0.7, ax=ax)
         nx.draw_networkx_labels(G, pos, font_size=8, font_weight='bold', ax=ax)
 
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-        sm.set_array([])  # For older versions of matplotlib
-        cbar = fig.colorbar(sm, ax=ax, label='Semantic Similarity')
+        sm.set_array([])
+        
 
         ax.set_title("Concept Map", fontsize=16)
         ax.axis('off')
@@ -276,8 +275,8 @@ if __name__ == "__main__":
     else:
         print("\nCould not load index by chapter.")
 
-    # print("\nProcessing Training Data...")
-    # train_results = process_data(TRAIN_DATA_DIR, nlp)
+    print("\nProcessing Training Data...")
+    train_results = process_data(TRAIN_DATA_DIR, nlp)
 
     print("\nProcessing Test Data...")
     test_results = process_data(TEST_DATA_DIR, nlp)
